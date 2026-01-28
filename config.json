@@ -1,0 +1,21 @@
+{
+    "ptt": {
+        "base_url": "https://www.ptt.cc",
+        "board": "Stock",
+        "pages_to_scrape": 5,
+        "threads_limit": 50
+    },
+    "market": {
+        "symbol": "^TWII",
+        "period": "5d",
+        "interval": "1h"
+    },
+    "paths": {
+        "raw_data": "data/raw",
+        "output": "output"
+    },
+    "sentiment": {
+        "default_weight": 0.5,
+        "use_textblob_fallback": true
+    }
+}
