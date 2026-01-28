@@ -1,0 +1,9 @@
+sqlalchemy
+streamlit
+yfinance
+beautifulsoup4
+requests
+pandas
+plotly
+textblob
+matplotlib

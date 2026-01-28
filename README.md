@@ -1,19 +1,21 @@
-# PTT Stock Sentiment Analysis System 📈
+# PTT Sentiment Alpha (Local Production Build) 📈
 
-A sophisticated end-to-end pipeline for scraping, decoding, and analyzing sentiment from the **PTT Stock board** (Taiwan's largest online community) and correlating it with the **Taiwan Weighted Index (^TWII)**.
+A robust, self-contained data pipeline and dashboard for correlating **PTT Stock Board** community sentiment with the **Taiwan Weighted Index (^TWII)**.
+
+This system monitors Taiwan's largest online trading community, decodes specialized financial slang, and visualizes the correlation between social momentum and market movements using a modern SQLite-backed architecture.
 
 ---
 
 ## 🌟 Key Features
 
-- **🚀 Automated PTT Scraper**: Bypasses the 18+ age gate and scrapes the latest threads, including titles, full content, and all push/boo comments.
-- **🏮 PTT Slang Decoder**: A specialized engine that translates unique Taiwanese stock market slang (e.g., *睏霸數錢*, *歐印*, *丸子*) into accurate sentiment scores.
-- **💹 Market Correlation**: Fetches real-time market data for the Taiwan Weighted Index (^TWII) using `yfinance` to correlate community sentiment with price movements.
-- **🎨 Premium Visualizations**: Generates high-quality, dark-mode charts featuring:
-    - TWII Price action (with Taiwan-style Red=Up/Green=Down logic).
-    - Weighted sentiment distribution.
-    - Sentiment heatmap for trend visualization.
-- **📊 Detailed Reporting**: Produces JSON reports with top sentiment tokens, bullish/bearish ratios, and overall market outlook.
+- **� Smart Incremental Scraper**: Optimized PTT scraper that only fetches new threads. It automatically stops when it encounters data already stored in the local database.
+- **🗄️ SQLite + SQLAlchemy 2.0 Backend**: Moving beyond flat JSON files to a relational database for reliable storage of posts, sentiment scores, and market data.
+- **🏮 Advanced Slang Decoding**: A specialized engine that translates unique Taiwanese "financial linguistics" (e.g., *睏霸數錢*, *歐印*, *丸子*) into quantifiable sentiment.
+- **💹 Market Data Integration**: Automated synchronization with `yfinance` for ^TWII historical and real-time data.
+- **📊 Real-time Dashboard**: A high-performance **Streamlit** dashboard featuring:
+    - **Dual-Axis Charts**: Overnight sentiment scores vs. TWSE price action.
+    - **Taiwan Color Logic**: Explicitly forced **Red = Up**, **Green = Down** matching local market standards.
+    - **Alpha Signals**: Moving average sentiment indicators to identify potential market turns.
 
 ---
 
@@ -22,15 +24,19 @@ A sophisticated end-to-end pipeline for scraping, decoding, and analyzing sentim
 ```text
 .
 ├── src/
+│   ├── database/
+│   │   ├── database.py      # SQLite connection & session management
+│   │   └── models.py        # SQLAlchemy models (Post, MarketData, Sentiment)
 │   ├── scraper/
-│   │   └── ptt_scraper.py      # PTT web scraping logic
-│   └── analysis/
-│       └── analysis_pipeline.py # Sentiment analysis & visualization
-├── data/
-│   └── raw/                    # Storage for raw scraped JSON data
-├── output/                     # Generated charts and reports (.png, .json)
-├── config.json                 # Global configuration parameters
-└── plan.md                     # Original project roadmap
+│   │   └── ptt_scraper.py    # Incremental PTT scraping logic
+│   ├── analysis/
+│   │   └── engine.py         # Slang normalization & sentiment scoring
+│   └── dashboard/
+│       └── app.py            # Streamlit visualization interface
+├── ptt_sentiment.db          # Local SQLite Database
+├── run_pipeline.py           # Orchestration script (Cron-ready)
+├── requirements.txt          # Python dependencies
+└── config.json               # Pipeline configuration
 ```
 
 ---
@@ -38,68 +44,53 @@ A sophisticated end-to-end pipeline for scraping, decoding, and analyzing sentim
 ## 🛠️ Installation & Setup
 
 ### 1. Requirements
-Ensure you have Python 3.8+ installed.
+- Python 3.10+
+- `conda` or `venv` recommended.
 
 ### 2. Install Dependencies
 ```bash
-pip install pandas yfinance matplotlib textblob beautifulsoup4 requests numpy
+pip install sqlalchemy streamlit yfinance beautifulsoup4 requests pandas plotly
 ```
 
-### 3. Configuration
-Modify `config.json` to adjust scraping limits or market data parameters:
-```json
-{
-    "ptt": {
-        "pages_to_scrape": 5,
-        "threads_limit": 50
-    },
-    "market": {
-        "symbol": "^TWII",
-        "period": "5d"
-    }
-}
-```
-
----
-
-## 🚀 How to Run
-
-### Step 1: Scrape PTT Data
-Run the scraper to collect the latest sentiment from the PTT Stock board.
+### 3. Initialize & Run Pipeline
+The `run_pipeline.py` script orchestrates the entire flow (Scrape -> Analyze -> Sync Market).
 ```bash
-python src/scraper/ptt_scraper.py
+python run_pipeline.py
 ```
-*Data will be saved to `data/raw/raw_ptt_data_[timestamp].json`.*
 
-### Step 2: Run Analysis Pipeline
-Process the scraped data, fetch market index, and generate the visualization.
+---
+
+## 🚀 Usage
+
+### Monitoring the Market
+To launch the interactive dashboard and view the sentiment correlation:
 ```bash
-python src/analysis/analysis_pipeline.py
+streamlit run src/dashboard/app.py
 ```
-*Outputs will be saved to the `output/` directory.*
+
+### Automation
+The system is designed to be "Cron-friendly". You can schedule `run_pipeline.py` to run every hour to keep your local database and sentiment signals up to date.
 
 ---
 
-## 🏮 The PTT Slang Dictionary
+## 🏮 The PTT Sentiment Dictionary
 
-This system understands the nuances of Taiwanese market sentiment:
-
-| Slang | Meaning | Sentiment |
-| :--- | :--- | :--- |
-| **歐印 (All-in)** | High conviction buy | 🟢 Bullish |
-| **睏霸數錢 (Sleep & count money)** | Extreme confidence | 🟢 Bullish |
-| **丸子/完蛋 (Meatball/Finished)** | Panic selling | 🔴 Bearish |
-| **畢業 (Graduate)** | Stop loss / Exit market | 🔴 Bearish |
-| **綠光罩頂 (Green light)** | Market crash (Green = Down in TW) | 🔴 Bearish |
+| Term | Context | Logic | Signal |
+| :--- | :--- | :--- | :--- |
+| **歐印 (All-in)** | High conviction | `BULLISH_CONFIDENCE` | 🟢 Bullish |
+| **睏霸數錢** | Profit taking/Confidence | `BULLISH_CONFIDENCE` | 🟢 Bullish |
+| **丸子/完蛋** | Panic | `BEARISH_PANIC` | 🔴 Bearish |
+| **畢業 (Graduate)** | Stop loss | `BEARISH_PANIC` | 🔴 Bearish |
+| **綠光罩頂** | Market crash | `BEARISH_PANIC` | 🔴 Bearish |
 
 ---
 
-## ⚠️ Important Note on Color Logic
-In the Taiwan Stock Market:
-- 🔴 **Red** indicates **UP** (Bullish)
-- 🟢 **Green** indicates **DOWN** (Bearish)
+## ⚠️ Regional Market Logic
+This project respects the unique conventions of the Taiwan Stock Exchange:
+- 🔴 **Red (紅)**: Price Increase (Bullish)
+- 🟢 **Green (綠)**: Price Decrease (Bearish)
 
-The visualizations in this project strictly follow this convention to provide an authentic analysis experience.
+*Note: This is the opposite of many Western markets.*
 
 ---
-*Created with 💙 by Antigravity*
+*Created by Antigravity*
