@@ -102,8 +102,8 @@ class PTTScraper:
         
         return push_count, boo_count
     
-    def _parse_publish_date(self, soup: BeautifulSoup) -> Optional[datetime]:
-        """Parse publish date from thread metadata."""
+    def _parse_publish_time(self, soup: BeautifulSoup) -> Optional[datetime]:
+        """Parse publish time from thread metadata."""
         metas = soup.find_all("div", class_="article-metaline")
         for meta in metas:
             tag = meta.find("span", class_="article-meta-tag")
@@ -186,7 +186,7 @@ class PTTScraper:
                 title=post_data["title"],
                 author=post_data["author"],
                 content=post_data.get("content", ""),
-                publish_date=post_data.get("publish_date", datetime.now()),
+                publish_time=post_data.get("publish_time", datetime.now()),
                 push_count=post_data.get("push_count", 0),
                 boo_count=post_data.get("boo_count", 0),
                 url=post_data.get("url", "")
@@ -238,7 +238,7 @@ class PTTScraper:
                     if thread_soup:
                         thread["content"] = self._parse_thread_content(thread_soup)
                         thread["push_count"], thread["boo_count"] = self._parse_push_boo_counts(thread_soup)
-                        thread["publish_date"] = self._parse_publish_date(thread_soup)
+                        thread["publish_time"] = self._parse_publish_time(thread_soup)
                     
                     # Save to database
                     if self._save_post(db, thread):

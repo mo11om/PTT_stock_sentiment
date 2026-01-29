@@ -3,7 +3,7 @@ SQLAlchemy ORM models for PTT Sentiment Analysis
 """
 
 from datetime import datetime, date
-from sqlalchemy import String, Text, Integer, Float, DateTime, Date, ForeignKey
+from sqlalchemy import String, Text, Integer, Float, DateTime, Date, ForeignKey, Index
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 from typing import Optional
 
@@ -23,7 +23,7 @@ class Post(Base):
     title: Mapped[str] = mapped_column(String(200), nullable=False)
     author: Mapped[str] = mapped_column(String(50), nullable=False)
     content: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    publish_date: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    publish_time: Mapped[datetime] = mapped_column(DateTime, nullable=False)  # Renamed for clarity
     push_count: Mapped[int] = mapped_column(Integer, default=0)
     boo_count: Mapped[int] = mapped_column(Integer, default=0)
     url: Mapped[Optional[str]] = mapped_column(String(300), nullable=True)
@@ -59,13 +59,25 @@ class Sentiment(Base):
     
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     post_id: Mapped[str] = mapped_column(String(50), ForeignKey("posts.id"), nullable=False, unique=True)
-    score: Mapped[float] = mapped_column(Float, nullable=False)  # -1.0 to 1.0
-    raw_score: Mapped[float] = mapped_column(Float, nullable=True)  # Before normalization
-    tokens_found: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)  # Comma-separated tokens
+    
+    # Sentiment scores
+    raw_score: Mapped[float] = mapped_column(Float, nullable=False)  # Basic weighted sentiment
+    z_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)  # Normalized deviation score
+    
+    # Trading day logic
+    effective_date: Mapped[date] = mapped_column(Date, nullable=False)  # Calculated trading day
+    
+    # Metadata
+    tokens_found: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     analyzed_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
     
     # Relationship to post
     post: Mapped["Post"] = relationship("Post", back_populates="sentiment")
     
+    # Index for efficient date queries
+    __table_args__ = (
+        Index('idx_sentiment_effective_date', 'effective_date'),
+    )
+    
     def __repr__(self) -> str:
-        return f"<Sentiment(post_id={self.post_id}, score={self.score})>"
+        return f"<Sentiment(post_id={self.post_id}, raw_score={self.raw_score}, effective_date={self.effective_date})>"

@@ -1,96 +1,110 @@
-# PTT Sentiment Alpha (Local Production Build) 📈
+# 📈 PTT Sentiment Alpha: Local Production Build
 
-A robust, self-contained data pipeline and dashboard for correlating **PTT Stock Board** community sentiment with the **Taiwan Weighted Index (^TWII)**.
-
-This system monitors Taiwan's largest online trading community, decodes specialized financial slang, and visualizes the correlation between social momentum and market movements using a modern SQLite-backed architecture.
+> **Senior Architect Spec**: A high-performance, local data pipeline for correlating Taiwanese retail sentiment with market movement.
 
 ---
 
-## 🌟 Key Features
+## 🚀 Overview
+PTT Sentiment Alpha is a quant-oriented tool designed to extract retail sentiment from the **PTT Stock Board** and align it with the **Taiwan Weighted Index (^TWII)**. It features a robust, local-first architecture using SQLite with WAL mode to handle concurrent data ingestion and visualization.
 
-- **� Smart Incremental Scraper**: Optimized PTT scraper that only fetches new threads. It automatically stops when it encounters data already stored in the local database.
-- **🗄️ SQLite + SQLAlchemy 2.0 Backend**: Moving beyond flat JSON files to a relational database for reliable storage of posts, sentiment scores, and market data.
-- **🏮 Advanced Slang Decoding**: A specialized engine that translates unique Taiwanese "financial linguistics" (e.g., *睏霸數錢*, *歐印*, *丸子*) into quantifiable sentiment.
-- **💹 Market Data Integration**: Automated synchronization with `yfinance` for ^TWII historical and real-time data.
-- **📊 Real-time Dashboard**: A high-performance **Streamlit** dashboard featuring:
-    - **Dual-Axis Charts**: Overnight sentiment scores vs. TWSE price action.
-    - **Taiwan Color Logic**: Explicitly forced **Red = Up**, **Green = Down** matching local market standards.
-    - **Alpha Signals**: Moving average sentiment indicators to identify potential market turns.
+### Core Value Proposition
+- **Retail Signal Extraction**: Converts fragmented slang-heavy discussions into quantitative sentiment scores.
+- **Trading Day Alignment**: Automatically shifts sentiment signals posts to the correct trading day (13:30 UTC+8 cutoff).
+- **Z-Score Analysis**: Identifies statistical outliers in sentiment to generate "Alpha" signals.
+- **Zero-Infra Setup**: Runs entirely on a local machine without Docker or external DB hosting.
 
 ---
 
-## 📁 Project Structure
+## 🛠️ Tech Stack
+- **Languages**: Python 3.10+
+- **Database**: SQLite 3 (WAL Mode Enabled)
+- **ORM**: SQLAlchemy 2.0
+- **Analysis**: Pandas, NumPy
+- **Scraping**: Requests, BeautifulSoup4
+- **Market Data**: `yfinance` (^TWII)
+- **UI/Viz**: Streamlit, Plotly (Taiwan-Standard Color Logic)
+
+---
+
+## 📂 System Architecture
+The system is built as a modular pipeline:
 
 ```text
-.
+/home/mo1om/code/interest/stock/
 ├── src/
-│   ├── database/
-│   │   ├── database.py      # SQLite connection & session management
-│   │   └── models.py        # SQLAlchemy models (Post, MarketData, Sentiment)
-│   ├── scraper/
-│   │   └── ptt_scraper.py    # Incremental PTT scraping logic
-│   ├── analysis/
-│   │   └── engine.py         # Slang normalization & sentiment scoring
-│   └── dashboard/
-│       └── app.py            # Streamlit visualization interface
-├── ptt_sentiment.db          # Local SQLite Database
-├── run_pipeline.py           # Orchestration script (Cron-ready)
-├── requirements.txt          # Python dependencies
-└── config.json               # Pipeline configuration
+│   ├── database/         # Data Access Layer
+│   │   ├── database.py   # Connection with WAL mode
+│   │   └── models.py     # Schema: Post, Sentiment (Z-Score), MarketData
+│   ├── scraper/          # Data Ingestion
+│   │   └── ptt_scraper.py # Incremental crawler (Newest -> Oldest)
+│   ├── analysis/         # Core Logic
+│   │   └── engine.py     # Slang Normalization + Trading Day Shift + Z-Score
+│   └── dashboard/        # Presentation
+│       └── app.py        # Streamlit Dual-Axis Visualization
+├── run_pipeline.py       # Orchestrator (Scrape -> Analyze -> Sync)
+└── ptt_sentiment.db      # Local Persistent Store (SQLite)
 ```
 
 ---
 
-## 🛠️ Installation & Setup
+## 🏮 Regional Constraints (CRITICAL)
+This project adheres strictly to **Taiwan Stock Exchange (TWSE)** conventions:
 
-### 1. Requirements
-- Python 3.10+
-- `conda` or `venv` recommended.
-
-### 2. Install Dependencies
-```bash
-pip install sqlalchemy streamlit yfinance beautifulsoup4 requests pandas plotly
-```
-
-### 3. Initialize & Run Pipeline
-The `run_pipeline.py` script orchestrates the entire flow (Scrape -> Analyze -> Sync Market).
-```bash
-python run_pipeline.py
-```
+1.  **Color Logic**:
+    -   🔴 **RED** (`#FF0000`): **Bullish** / Price Up
+    -   🟢 **GREEN** (`#00FF00`): **Bearish** / Price Down
+2.  **Timezone**: `Asia/Taipei` (UTC+8)
+3.  **Market Hours**: 09:00 - 13:30.
+4.  **Effective Trading Day**:
+    -   Posts published **after 13:30** are assigned to the **next trading day**.
+    -   Weekends/Holidays are shifted to the next open market day (Monday).
 
 ---
 
-## 🚀 Usage
+## ⚙️ Module Implementation Details
 
-### Monitoring the Market
-To launch the interactive dashboard and view the sentiment correlation:
+### 1. Database (`src/database/`)
+-   **WAL Mode**: Write-Ahead Logging is enabled to allow the Dashboard (Read) and Scraper (Write) to run concurrently.
+-   **Schema**:
+    -   `Post`: Raw text data and author info.
+    -   `Sentiment`: Computed `raw_score` and `z_score`.
+    -   `MarketData`: Daily OHLCV for ^TWII.
+
+### 2. Analysis Engine (`src/analysis/`)
+-   **Slang Dictionary**:
+    -   **Bearish** (-1.0): "丸子" (Dead), "綠光" (Green Light), "睡公園" (Homeless).
+    -   **Bullish** (+1.0): "睏霸數錢" (Rich), "歐印" (All-in), "飛向宇宙" (To the Moon).
+-   **Negation Logic**: Handles patterns like "不要歐印" (Don't All-in) -> Flips score to Bearish.
+-   **Alpha Signal**: Uses a **20-day Rolling Z-Score** to generate signals, filtering out daily noise.
+
+### 3. Dashboard (`src/dashboard/`)
+-   **Dual-Axis Chart**:
+    -   Left: TWII Close Price (Line).
+    -   Right: Sentiment Z-Score (Bar).
+-   **Visuals**: Strict adherence to Red/Green color coding.
+
+---
+
+## ⚡ Quick Start
+
+### 1. Installation
+```bash
+pip install -r requirements.txt
+```
+
+### 2. Run the Pipeline
+Scrape new posts, calculate sentiment, and sync market prices:
+```bash
+python run_pipeline.py --pages 10
+```
+
+### 3. Launch Dashboard
+Visualize the Alpha:
 ```bash
 streamlit run src/dashboard/app.py
 ```
 
-### Automation
-The system is designed to be "Cron-friendly". You can schedule `run_pipeline.py` to run every hour to keep your local database and sentiment signals up to date.
-
 ---
 
-## 🏮 The PTT Sentiment Dictionary
-
-| Term | Context | Logic | Signal |
-| :--- | :--- | :--- | :--- |
-| **歐印 (All-in)** | High conviction | `BULLISH_CONFIDENCE` | 🟢 Bullish |
-| **睏霸數錢** | Profit taking/Confidence | `BULLISH_CONFIDENCE` | 🟢 Bullish |
-| **丸子/完蛋** | Panic | `BEARISH_PANIC` | 🔴 Bearish |
-| **畢業 (Graduate)** | Stop loss | `BEARISH_PANIC` | 🔴 Bearish |
-| **綠光罩頂** | Market crash | `BEARISH_PANIC` | 🔴 Bearish |
-
----
-
-## ⚠️ Regional Market Logic
-This project respects the unique conventions of the Taiwan Stock Exchange:
-- 🔴 **Red (紅)**: Price Increase (Bullish)
-- 🟢 **Green (綠)**: Price Decrease (Bearish)
-
-*Note: This is the opposite of many Western markets.*
-
----
-*Created by Antigravity*
+## 🛡️ License
+MIT. Built for research and educational purposes.

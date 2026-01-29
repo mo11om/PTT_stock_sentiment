@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 PTT Sentiment Alpha Dashboard
-Streamlit app for visualizing PTT sentiment vs TWII market data.
+Streamlit app with Z-Score visualization and Taiwan color logic.
 """
 
 import sys
@@ -46,17 +46,18 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 
-@st.cache_data(ttl=300)  # Cache for 5 minutes
+@st.cache_data(ttl=300)
 def load_sentiment_data():
-    """Load sentiment data from database."""
+    """Load sentiment data with effective_date."""
     with get_db() as db:
         results = db.query(
             Post.id,
             Post.title,
-            Post.publish_date,
+            Post.publish_time,
             Post.push_count,
             Post.boo_count,
-            Sentiment.score,
+            Sentiment.raw_score,
+            Sentiment.effective_date,
             Sentiment.analyzed_at
         ).join(Sentiment, Post.id == Sentiment.post_id).all()
         
@@ -67,16 +68,16 @@ def load_sentiment_data():
             {
                 "post_id": r[0],
                 "title": r[1],
-                "publish_date": r[2],
+                "publish_time": r[2],
                 "push_count": r[3],
                 "boo_count": r[4],
-                "score": r[5],
-                "analyzed_at": r[6]
+                "raw_score": r[5],
+                "effective_date": r[6],
+                "analyzed_at": r[7]
             }
             for r in results
         ])
         
-        df['date'] = pd.to_datetime(df['publish_date']).dt.date
         return df
 
 
@@ -103,56 +104,70 @@ def load_market_data():
         return df
 
 
-def calculate_daily_sentiment(sentiment_df: pd.DataFrame) -> pd.DataFrame:
-    """Aggregate sentiment scores by date."""
+def calculate_daily_sentiment_with_zscore(sentiment_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Aggregate sentiment by effective_date and compute Z-Score.
+    Z-Score = (Today_Avg - Rolling_Mean) / Rolling_Std
+    """
     if sentiment_df.empty:
         return pd.DataFrame()
     
-    daily = sentiment_df.groupby('date').agg({
-        'score': 'mean',
+    daily = sentiment_df.groupby('effective_date').agg({
+        'raw_score': 'mean',
         'post_id': 'count',
         'push_count': 'sum',
         'boo_count': 'sum'
     }).reset_index()
     
     daily.columns = ['date', 'avg_sentiment', 'post_count', 'total_push', 'total_boo']
+    daily = daily.sort_values('date')
+    
+    # Calculate 20-day rolling Z-Score
+    rolling_window = 20
+    daily['rolling_mean'] = daily['avg_sentiment'].rolling(window=rolling_window, min_periods=3).mean()
+    daily['rolling_std'] = daily['avg_sentiment'].rolling(window=rolling_window, min_periods=3).std()
+    
+    # Z-Score calculation
+    daily['z_score'] = (daily['avg_sentiment'] - daily['rolling_mean']) / daily['rolling_std']
+    daily['z_score'] = daily['z_score'].fillna(0)
+    
     return daily
 
 
 def get_sentiment_signal(sentiment_df: pd.DataFrame, days: int = 3) -> str:
-    """Calculate sentiment signal based on recent data."""
+    """Calculate sentiment signal based on recent Z-Score."""
     if sentiment_df.empty:
         return "NEUTRAL"
     
-    # Sort by date descending and take top N days
     recent = sentiment_df.sort_values('date', ascending=False).head(days)
-    avg = recent['avg_sentiment'].mean() if 'avg_sentiment' in recent.columns else recent['score'].mean()
     
-    if avg > 0.15:
+    if 'z_score' in recent.columns:
+        avg_z = recent['z_score'].mean()
+    else:
+        avg_z = recent['avg_sentiment'].mean() if 'avg_sentiment' in recent.columns else 0
+    
+    if avg_z > 0.5:
         return "BULLISH"
-    elif avg < -0.15:
+    elif avg_z < -0.5:
         return "BEARISH"
     return "NEUTRAL"
 
 
 def create_dual_axis_chart(market_df: pd.DataFrame, sentiment_df: pd.DataFrame):
-    """Create dual-axis chart with Taiwan color logic (Red=Up, Green=Down)."""
+    """Create dual-axis chart: TWII price + Z-Score with Taiwan colors."""
     
     fig = make_subplots(
         rows=2, cols=1,
         shared_xaxes=True,
         vertical_spacing=0.1,
-        row_heights=[0.7, 0.3],
-        subplot_titles=("TWII Price & Sentiment", "Daily Sentiment Score")
+        row_heights=[0.65, 0.35],
+        subplot_titles=("TWII Price", "Sentiment Z-Score (Red=Bullish, Green=Bearish)")
     )
     
     # Market data - candlestick with Taiwan colors
     if not market_df.empty:
+        market_df = market_df.copy()
         market_df['date'] = pd.to_datetime(market_df['date'])
-        
-        # Custom colors: Red for up, Green for down (Taiwan style)
-        colors = ['#ff4444' if row['close'] >= row['open'] else '#00cc00' 
-                  for _, row in market_df.iterrows()]
         
         fig.add_trace(
             go.Candlestick(
@@ -162,37 +177,40 @@ def create_dual_axis_chart(market_df: pd.DataFrame, sentiment_df: pd.DataFrame):
                 low=market_df['low'],
                 close=market_df['close'],
                 name="TWII",
-                increasing_line_color='#ff4444',  # Red for up
-                decreasing_line_color='#00cc00',  # Green for down
+                increasing_line_color='#ff4444',  # Red for up (Taiwan)
+                decreasing_line_color='#00cc00',  # Green for down (Taiwan)
             ),
             row=1, col=1
         )
     
-    # Sentiment data
-    if not sentiment_df.empty:
+    # Z-Score data
+    if not sentiment_df.empty and 'z_score' in sentiment_df.columns:
+        sentiment_df = sentiment_df.copy()
         sentiment_df['date'] = pd.to_datetime(sentiment_df['date'])
         
-        # Color bars based on sentiment (Red=Bullish, Green=Bearish)
-        colors = ['#ff4444' if s > 0 else '#00cc00' for s in sentiment_df['avg_sentiment']]
+        # Color bars: Red = Bullish (positive Z), Green = Bearish (negative Z)
+        colors = ['#ff4444' if z > 0 else '#00cc00' for z in sentiment_df['z_score']]
         
         fig.add_trace(
             go.Bar(
                 x=sentiment_df['date'],
-                y=sentiment_df['avg_sentiment'],
-                name="Sentiment",
+                y=sentiment_df['z_score'],
+                name="Z-Score",
                 marker_color=colors,
-                opacity=0.7
+                opacity=0.8
             ),
             row=2, col=1
         )
         
-        # Add zero line
-        fig.add_hline(y=0, line_dash="dash", line_color="white", opacity=0.5, row=2, col=1)
+        # Add reference lines
+        fig.add_hline(y=0, line_dash="solid", line_color="white", opacity=0.5, row=2, col=1)
+        fig.add_hline(y=1, line_dash="dash", line_color="#ff6666", opacity=0.3, row=2, col=1)
+        fig.add_hline(y=-1, line_dash="dash", line_color="#66cc66", opacity=0.3, row=2, col=1)
     
     # Layout
     fig.update_layout(
         template="plotly_dark",
-        height=600,
+        height=650,
         showlegend=True,
         legend=dict(yanchor="top", y=0.99, xanchor="left", x=0.01),
         xaxis_rangeslider_visible=False,
@@ -217,30 +235,33 @@ def main():
     # Load data
     sentiment_df = load_sentiment_data()
     market_df = load_market_data()
-    daily_sentiment = calculate_daily_sentiment(sentiment_df)
+    daily_sentiment = calculate_daily_sentiment_with_zscore(sentiment_df)
     
     # Metrics row
     col1, col2, col3, col4 = st.columns(4)
     
     with col1:
         total_posts = len(sentiment_df) if not sentiment_df.empty else 0
-        st.metric("Total Posts Analyzed", total_posts)
+        st.metric("Total Posts", total_posts)
     
     with col2:
-        avg_sentiment = sentiment_df['score'].mean() if not sentiment_df.empty else 0
-        st.metric("Average Sentiment", f"{avg_sentiment:.3f}")
+        if not daily_sentiment.empty and 'z_score' in daily_sentiment.columns:
+            latest_z = daily_sentiment.iloc[-1]['z_score']
+            st.metric("Latest Z-Score", f"{latest_z:.2f}")
+        else:
+            st.metric("Latest Z-Score", "N/A")
     
     with col3:
         signal = get_sentiment_signal(daily_sentiment)
         signal_color = "🔴" if signal == "BULLISH" else "🟢" if signal == "BEARISH" else "⚪"
-        st.metric("Current Signal (3-day)", f"{signal_color} {signal}")
+        st.metric("Signal (3-day)", f"{signal_color} {signal}")
     
     with col4:
         if not market_df.empty:
             latest_close = market_df.iloc[-1]['close']
             prev_close = market_df.iloc[-2]['close'] if len(market_df) > 1 else latest_close
             change = ((latest_close - prev_close) / prev_close) * 100
-            st.metric("TWII Close", f"{latest_close:,.2f}", f"{change:+.2f}%")
+            st.metric("TWII Close", f"{latest_close:,.0f}", f"{change:+.2f}%")
         else:
             st.metric("TWII Close", "N/A")
     
@@ -257,11 +278,12 @@ def main():
     st.subheader("📝 Recent Analyzed Posts")
     
     if not sentiment_df.empty:
-        recent = sentiment_df.sort_values('publish_date', ascending=False).head(20)[['title', 'score', 'push_count', 'boo_count', 'publish_date']]
-        recent['sentiment'] = recent['score'].apply(
+        recent = sentiment_df.sort_values('publish_time', ascending=False).head(20)
+        display_df = recent[['title', 'raw_score', 'effective_date', 'push_count', 'boo_count']].copy()
+        display_df['sentiment'] = display_df['raw_score'].apply(
             lambda x: "🔴 Bullish" if x > 0.1 else "🟢 Bearish" if x < -0.1 else "⚪ Neutral"
         )
-        st.dataframe(recent, use_container_width=True, hide_index=True)
+        st.dataframe(display_df, use_container_width=True, hide_index=True)
     else:
         st.info("No posts analyzed yet.")
     

@@ -1,8 +1,9 @@
 """
 Database connection setup for SQLite using SQLAlchemy 2.0
+With WAL mode for concurrent reads/writes (Scraper + Dashboard)
 """
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker, Session
 from contextlib import contextmanager
 import os
@@ -18,6 +19,14 @@ engine = create_engine(
     echo=False,  # Set to True for SQL debugging
     connect_args={"check_same_thread": False}  # Required for SQLite with threading
 )
+
+# CRITICAL: Enable WAL mode for concurrent reads/writes
+@event.listens_for(engine, "connect")
+def set_sqlite_pragma(dbapi_connection, connection_record):
+    cursor = dbapi_connection.cursor()
+    cursor.execute("PRAGMA journal_mode=WAL")
+    cursor.execute("PRAGMA synchronous=NORMAL")
+    cursor.close()
 
 # Session factory
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
@@ -56,3 +65,12 @@ def init_db():
     from .models import Base
     Base.metadata.create_all(bind=engine)
     print(f"Database initialized at: {DB_PATH}")
+
+
+def vacuum_db():
+    """Run VACUUM to optimize SQLite storage."""
+    from sqlalchemy import text
+    with engine.connect() as conn:
+        conn.execute(text("VACUUM"))
+        conn.commit()
+    print("Database vacuumed successfully")

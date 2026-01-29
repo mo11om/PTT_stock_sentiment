@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 PTT Sentiment Alpha - Pipeline Orchestrator
-Runs the complete data pipeline: Scrape -> Analyze -> Sync Market Data
+Runs the complete data pipeline: Scrape -> Analyze -> Sync Market Data -> Maintenance
 """
 
 import os
@@ -13,12 +13,12 @@ PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, PROJECT_ROOT)
 os.chdir(PROJECT_ROOT)
 
-from src.database import init_db
+from src.database import init_db, vacuum_db
 from src.scraper.ptt_scraper import PTTScraper
 from src.analysis.engine import SentimentEngine, sync_market_data
 
 
-def run_pipeline(max_pages: int = 5):
+def run_pipeline(max_pages: int = 5, run_vacuum: bool = True):
     """
     Execute the full PTT Sentiment Alpha pipeline.
     
@@ -27,6 +27,7 @@ def run_pipeline(max_pages: int = 5):
     2. Run scraper (incremental - only new posts)
     3. Run sentiment analysis (only unanalyzed posts)
     4. Sync market data (only missing dates)
+    5. Maintenance (VACUUM to optimize storage)
     """
     print("=" * 70)
     print("  PTT Sentiment Alpha - Pipeline Orchestrator")
@@ -50,6 +51,14 @@ def run_pipeline(max_pages: int = 5):
     # Step 3: Sync Market Data
     print("\n[Step 3] Syncing Market Data...")
     market_records = sync_market_data()
+    
+    # Step 4: Maintenance - VACUUM
+    if run_vacuum:
+        print("\n[Step 4] Running maintenance (VACUUM)...")
+        try:
+            vacuum_db()
+        except Exception as e:
+            print(f"  ⚠️ Vacuum failed (non-critical): {e}")
     
     # Summary
     print("\n" + "=" * 70)
@@ -76,6 +85,7 @@ if __name__ == "__main__":
     
     parser = argparse.ArgumentParser(description="PTT Sentiment Alpha Pipeline")
     parser.add_argument("--pages", type=int, default=5, help="Max pages to scrape (default: 5)")
+    parser.add_argument("--no-vacuum", action="store_true", help="Skip VACUUM step")
     args = parser.parse_args()
     
-    run_pipeline(max_pages=args.pages)
+    run_pipeline(max_pages=args.pages, run_vacuum=not args.no_vacuum)
