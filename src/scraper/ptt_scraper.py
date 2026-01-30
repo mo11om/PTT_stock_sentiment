@@ -29,7 +29,7 @@ class PTTScraper:
     RETRY_DELAY = 5  # seconds
     REQUEST_DELAY = 1  # seconds between requests
     
-    def __init__(self, max_pages: int = 10, backfill: bool = False):
+    def __init__(self, max_pages: int = 10, backfill: bool = False, start_page: int = None):
         self.session = requests.Session()
         # Bypass age gate with over18 cookie
         self.session.cookies.set("over18", "1")
@@ -38,6 +38,7 @@ class PTTScraper:
         })
         self.max_pages = max_pages
         self.backfill = backfill  # If True, continue past cached posts
+        self.start_page = start_page  # If set, start from specific page number
         self.new_posts_count = 0
     
     def _request_with_retry(self, url: str) -> Optional[requests.Response]:
@@ -206,12 +207,22 @@ class PTTScraper:
         Returns the number of new posts scraped.
         
         If backfill=True, continues through all pages even when cached posts are found.
+        If start_page is set, begins from that specific page number.
         """
         print("=" * 60)
-        print("PTT Stock Board Smart Scraper" + (" (BACKFILL MODE)" if self.backfill else ""))
+        mode_info = ""
+        if self.backfill:
+            mode_info += " (BACKFILL)"
+        if self.start_page:
+            mode_info += f" (START: page {self.start_page})"
+        print("PTT Stock Board Smart Scraper" + mode_info)
         print("=" * 60)
         
-        current_url = self.BOARD_URL
+        # Determine starting URL
+        if self.start_page:
+            current_url = f"{self.BASE_URL}/bbs/Stock/index{self.start_page}.html"
+        else:
+            current_url = self.BOARD_URL
         pages_scraped = 0
         should_stop = False
         

@@ -1,41 +1,52 @@
 #!/usr/bin/env python3
 """
-PTT Bull/Bear Slang Miner
-Discovers slang terms correlated with market movements using differential scoring.
+PTT Slang Miner - Regime Discovery Engine
+Identifies slang words dominating specific market regimes (30-day trend).
 """
 
 import sys
 import os
-from datetime import datetime, date, timedelta, time
+from datetime import datetime, date, timedelta
 from typing import Dict, List, Tuple, Optional
-from collections import defaultdict
+from collections import Counter
 
 import jieba
 import pandas as pd
-import yfinance as yf
 
 # Add project root to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from src.database import get_db, Post, MarketData
+from src.database import get_db, Post, MarketData, SlangCandidate
 
 
-# Taiwan market constants
-MARKET_CLOSE_TIME = time(13, 30)
-BULL_THRESHOLD = 0.5   # >= +0.5% is BULL
-BEAR_THRESHOLD = -2  # <= -0.5% is BEAR
+# Configuration Constants
+LOOKBACK_DAYS = 30      # Compare today vs. 30 days ago
+THRESHOLD_PCT = 0.05    # 5% change required to trigger a regime
+MIN_FREQUENCY = 3       # Minimum total occurrences to be considered
 
+# Chinese Stopwords (common words that don't carry sentiment)
+STOPWORDS = {
+    # Common particles
+    "的", "了", "是", "我", "你", "他", "她", "它", "們", "這", "那", "有", "在",
+    "和", "與", "或", "但", "不", "也", "都", "就", "會", "能", "可以", "要",
+    "去", "來", "到", "說", "做", "給", "從", "被", "把", "讓", "對", "為",
+    # Numbers and time
+    "一", "二", "三", "四", "五", "六", "七", "八", "九", "十", "百", "千", "萬",
+    "今天", "明天", "昨天", "現在", "之前", "之後", "時候",
+    # Stock-specific common words (neutral)
+    "股票", "公司", "台股", "大盤", "指數", "成交量", "收盤", "開盤",
+    "請問", "謝謝", "問題", "請益", "閒聊", "標的", "新聞", "心得",
+    # PTT specific
+    "Re", "作者", "標題", "時間", "推文",
+}
 
-# PTT Slang Seed Dictionary - pre-load into jieba
+# PTT Slang Seeds - pre-load into jieba for better segmentation
 PTT_SLANG_SEEDS = [
-    # Bullish slang
-    "歐印", "睏霸數錢", "飛向宇宙", "噴", "起飛", "噴到外太空", "發財", 
+    "歐印", "睏霸數錢", "飛向宇宙", "噴", "起飛", "噴到外太空", "發財",
     "漲停", "紅通通", "財富自由", "噴出", "上看", "衝",
-    # Bearish slang
     "丸子", "完蛋", "綠光", "畢業", "睡公園", "崩", "跳水",
     "死魚", "被套", "割韭菜", "跌停", "綠光罩頂", "慘", "GG", "掰掰",
-    # Neutral/descriptive
-    "外資", "投信", "自營商", "台積電", "鴻海", "聯發科"
+    "外資", "投信", "自營商", "法人", "散戶", "主力",
 ]
 
 # Initialize jieba with PTT slang
@@ -43,270 +54,236 @@ for word in PTT_SLANG_SEEDS:
     jieba.add_word(word)
 
 
-class MarketOracle:
-    """
-    Fetches ^TWII and labels dates as BULL/BEAR based on percentage change.
-    
-    BULL: Daily return >= +0.5%
-    BEAR: Daily return <= -0.5%
-    NEUTRAL: Otherwise
-    """
-    
-    def __init__(self, bull_threshold: float = BULL_THRESHOLD, bear_threshold: float = BEAR_THRESHOLD):
-        self.bull_threshold = bull_threshold
-        self.bear_threshold = bear_threshold
-        self.market_labels: Dict[date, str] = {}
-    
-    def load_from_db(self) -> int:
-        """Load market data from database and label each day."""
-        with get_db() as db:
-            records = db.query(MarketData).order_by(MarketData.date).all()
-            
-            for record in records:
-                # Calculate daily return percentage
-                daily_return = ((record.close - record.open) / record.open) * 100
-                
-                if daily_return >= self.bull_threshold:
-                    label = "BULL"
-                elif daily_return <= self.bear_threshold:
-                    label = "BEAR"
-                else:
-                    label = "NEUTRAL"
-                
-                self.market_labels[record.date] = label
-        
-        return len(self.market_labels)
-    
-    def get_label(self, d: date) -> Optional[str]:
-        """Get market label for a specific date."""
-        return self.market_labels.get(d)
-    
-    def get_stats(self) -> Dict[str, int]:
-        """Get count of each label."""
-        stats = {"BULL": 0, "BEAR": 0, "NEUTRAL": 0}
-        for label in self.market_labels.values():
-            stats[label] += 1
-        return stats
-
-
-def calculate_trading_day(publish_time: datetime) -> date:
-    """
-    Calculate the effective trading day for a post.
-    - Posts after 13:30 belong to NEXT trading day
-    - Weekends shift to Monday
-    """
-    post_date = publish_time.date()
-    post_time = publish_time.time()
-    
-    if post_time > MARKET_CLOSE_TIME:
-        effective_date = post_date + timedelta(days=1)
-    else:
-        effective_date = post_date
-    
-    # Skip weekends
-    weekday = effective_date.weekday()
-    if weekday == 5:  # Saturday
-        effective_date += timedelta(days=2)
-    elif weekday == 6:  # Sunday
-        effective_date += timedelta(days=1)
-    
-    return effective_date
-
-
 class SlangMiner:
     """
-    Mines slang terms from posts and calculates correlation with market direction.
+    Regime Discovery Slang Miner.
     
-    Differential Scoring: Polarity = (Bull_Freq - Bear_Freq) / (Bull_Freq + Bear_Freq)
+    Identifies slang words that dominate specific market regimes:
+    - BULL_TREND: 30-day return > +5%
+    - BEAR_TREND: 30-day return < -5%
     """
     
-    def __init__(self, min_frequency: int = 3):
-        self.oracle = MarketOracle()
-        self.min_frequency = min_frequency
-        
-        # Word frequency counters
-        self.bull_words: Dict[str, int] = defaultdict(int)
-        self.bear_words: Dict[str, int] = defaultdict(int)
+    def __init__(self, lookback_days: int = LOOKBACK_DAYS, threshold_pct: float = THRESHOLD_PCT):
+        self.lookback_days = lookback_days
+        self.threshold_pct = threshold_pct
+        self.regime_labels: Dict[date, str] = {}
     
-    def tokenize(self, text: str) -> List[str]:
-        """Tokenize Chinese text using jieba."""
-        # Segment text
-        words = jieba.lcut(text)
-        
-        # Filter: keep words with length >= 2 (skip single chars and punctuation)
-        words = [w.strip() for w in words if len(w.strip()) >= 2]
-        
-        return words
-    
-    def analyze(self) -> Tuple[List[Tuple[str, float]], List[Tuple[str, float]]]:
+    def _label_days(self) -> Dict[date, str]:
         """
-        Analyze all posts and return top Bull/Bear slang terms.
+        Label each day in MarketData as BULL_TREND, BEAR_TREND, or NEUTRAL.
+        
+        Regime = (Close[today] - Close[today - lookback_days]) / Close[today - lookback_days]
+        """
+        print(f"\n📊 Labeling market regimes (lookback={self.lookback_days} days, threshold={self.threshold_pct*100:.0f}%)")
+        
+        with get_db() as db:
+            # Get all market data sorted by date
+            records = db.query(MarketData).order_by(MarketData.date).all()
+            
+            if len(records) < self.lookback_days:
+                print(f"   ⚠️ Not enough data ({len(records)} days < {self.lookback_days} lookback)")
+                return {}
+            
+            # Build date->close price lookup
+            close_prices: Dict[date, float] = {r.date: r.close for r in records}
+            dates = sorted(close_prices.keys())
+            
+            bull_count = 0
+            bear_count = 0
+            
+            for d in dates:
+                lookback_date = d - timedelta(days=self.lookback_days)
+                
+                # Find closest trading day to lookback_date
+                lookback_close = None
+                for offset in range(7):  # Check up to 7 days back for trading day
+                    check_date = lookback_date - timedelta(days=offset)
+                    if check_date in close_prices:
+                        lookback_close = close_prices[check_date]
+                        break
+                
+                if lookback_close is None:
+                    continue
+                
+                # Calculate regime
+                regime = (close_prices[d] - lookback_close) / lookback_close
+                
+                if regime > self.threshold_pct:
+                    self.regime_labels[d] = "BULL_TREND"
+                    bull_count += 1
+                elif regime < -self.threshold_pct:
+                    self.regime_labels[d] = "BEAR_TREND"
+                    bear_count += 1
+                # else: NEUTRAL - not stored
+            
+            print(f"   ✓ BULL_TREND: {bull_count} days | BEAR_TREND: {bear_count} days")
+        
+        return self.regime_labels
+    
+    def _tokenize_posts(self, regime_dict: Dict[date, str]) -> Tuple[Counter, Counter]:
+        """
+        Tokenize posts and build frequency counters for bull/bear regimes.
         
         Returns:
-            (bull_list, bear_list) - Each is [(word, polarity_score), ...]
+            (bull_counter, bear_counter) - Token frequencies for each regime
         """
-        print("=" * 60)
-        print("PTT Slang Miner - Differential Scoring")
-        print("=" * 60)
-        
-        # Load market labels
-        n_days = self.oracle.load_from_db()
-        stats = self.oracle.get_stats()
-        print(f"\n📊 Market Data: {n_days} days")
-        print(f"   BULL ({self.oracle.bull_threshold}%+): {stats['BULL']}")
-        print(f"   BEAR ({self.oracle.bear_threshold}%-): {stats['BEAR']}")
-        print(f"   NEUTRAL: {stats['NEUTRAL']}")
-        
-        # Process posts
-        posts_processed = 0
-        bull_posts = 0
-        bear_posts = 0
+        bull_counter: Counter = Counter()
+        bear_counter: Counter = Counter()
         
         with get_db() as db:
             posts = db.query(Post).all()
-            print(f"\n📝 Processing {len(posts)} posts...")
+            bull_posts = 0
+            bear_posts = 0
             
             for post in posts:
-                # Calculate effective trading day
-                effective_date = calculate_trading_day(post.publish_time)
+                # Get effective date (use publish_time date, or calculate trading day)
+                post_date = post.publish_time.date()
                 
-                # Get market label for that day
-                label = self.oracle.get_label(effective_date)
-                if label is None or label == "NEUTRAL":
+                # Check if this date is in a labeled regime
+                regime = regime_dict.get(post_date)
+                if regime is None:
                     continue
-                
-                posts_processed += 1
-                if label == "BULL":
-                    bull_posts += 1
-                else:
-                    bear_posts += 1
                 
                 # Tokenize content
                 text = f"{post.title} {post.content or ''}"
-                tokens = self.tokenize(text)
+                tokens = jieba.lcut(text)
                 
-                # Count word occurrences
-                for word in set(tokens):  # Use set to count word once per post
-                    if label == "BULL":
-                        self.bull_words[word] += 1
-                    elif label == "BEAR":
-                        self.bear_words[word] += 1
+                # Filter tokens
+                filtered_tokens = []
+                for token in tokens:
+                    token = token.strip()
+                    # Skip: single chars, stopwords, numbers, punctuation
+                    if len(token) < 2:
+                        continue
+                    if token in STOPWORDS:
+                        continue
+                    if token.isdigit():
+                        continue
+                    filtered_tokens.append(token)
+                
+                # Count tokens
+                if regime == "BULL_TREND":
+                    bull_counter.update(filtered_tokens)
+                    bull_posts += 1
+                elif regime == "BEAR_TREND":
+                    bear_counter.update(filtered_tokens)
+                    bear_posts += 1
+            
+            print(f"\n📝 Tokenized {bull_posts} bull-regime posts, {bear_posts} bear-regime posts")
         
-        print(f"   Used {posts_processed} posts ({bull_posts} bull, {bear_posts} bear)")
+        return bull_counter, bear_counter
+    
+    def _calculate_polarity(self, bull_counter: Counter, bear_counter: Counter) -> List[Tuple[str, float, int, int]]:
+        """
+        Calculate polarity score for each token.
         
-        # Calculate differential scores
-        all_words = set(self.bull_words.keys()) | set(self.bear_words.keys())
-        word_scores: Dict[str, float] = {}
+        Polarity = (bull_freq - bear_freq) / (bull_freq + bear_freq)
         
-        for word in all_words:
-            bull_freq = self.bull_words.get(word, 0)
-            bear_freq = self.bear_words.get(word, 0)
+        Returns:
+            List of (token, score, bull_freq, bear_freq) sorted by absolute score
+        """
+        all_tokens = set(bull_counter.keys()) | set(bear_counter.keys())
+        results = []
+        
+        for token in all_tokens:
+            bull_freq = bull_counter.get(token, 0)
+            bear_freq = bear_counter.get(token, 0)
             total = bull_freq + bear_freq
             
-            # Lower minimum frequency for small datasets
-            min_freq = max(1, self.min_frequency) if posts_processed < 50 else self.min_frequency
-            if total < min_freq:
+            # Filter low frequency tokens
+            if total < MIN_FREQUENCY:
                 continue
             
-            # Differential scoring: +1.0 (pure bull) to -1.0 (pure bear)
+            # Calculate polarity
             polarity = (bull_freq - bear_freq) / total
-            word_scores[word] = polarity
+            results.append((token, polarity, bull_freq, bear_freq))
         
-        # Sort and get top Bull/Bear terms
-        sorted_words = sorted(word_scores.items(), key=lambda x: x[1], reverse=True)
+        # Sort by absolute polarity score
+        results.sort(key=lambda x: abs(x[1]), reverse=True)
         
-        # Top bullish (highest positive polarity, including pure bull words)
-        bull_list = [(w, s) for w, s in sorted_words if s > 0][:20]
-        
-        # Top bearish (most negative polarity)
-        bear_list = [(w, s) for w, s in sorted_words if s < 0]
-        bear_list = sorted(bear_list, key=lambda x: x[1])[:20]  # Most negative first
-        
-        # If no bear slang found but we have bear posts, show all bear-day words
-        if not bear_list and bear_posts > 0:
-            bear_only = [(w, -1.0) for w, freq in self.bear_words.items() if freq >= 1][:20]
-            bear_list = bear_only
-        
-        # If no bull slang found but we have bull posts, show frequent bull-day words
-        if not bull_list and bull_posts > 0:
-            bull_only = [(w, 1.0) for w, freq in self.bull_words.items() if freq >= 2][:20]
-            bull_list = bull_only
-        
-        print(f"\n✓ Found {len(bull_list)} bullish slang, {len(bear_list)} bearish slang")
-        
-        return bull_list, bear_list
+        return results
     
-    def print_report(self, bull_list: List[Tuple[str, float]], bear_list: List[Tuple[str, float]]):
-        """Print formatted report of discovered slang."""
-        print("\n" + "=" * 60)
-        print("🔴 TOP BULLISH SLANG (correlated with market UP)")
-        print("=" * 60)
-        for i, (word, score) in enumerate(bull_list[:10], 1):
-            bar = "█" * int(abs(score) * 20)
-            print(f"  {i:2d}. {word:<12} +{score:.2f} {bar}")
-        
-        print("\n" + "=" * 60)
-        print("🟢 TOP BEARISH SLANG (correlated with market DOWN)")
-        print("=" * 60)
-        for i, (word, score) in enumerate(bear_list[:10], 1):
-            bar = "█" * int(abs(score) * 20)
-            print(f"  {i:2d}. {word:<12} {score:.2f} {bar}")
-    
-    def save_to_db(self, bull_list: List[Tuple[str, float]], bear_list: List[Tuple[str, float]]) -> int:
-        """Save discovered slang to MinedSlang table for use by sentiment engine."""
-        from src.database import MinedSlang
-        
+    def _save_to_db(self, results: List[Tuple[str, float, int, int]]) -> int:
+        """Save top slang candidates to database."""
         saved = 0
+        
         with get_db() as db:
-            # Save bullish slang
-            for word, polarity in bull_list:
-                existing = db.query(MinedSlang).filter(MinedSlang.word == word).first()
-                if existing:
-                    existing.polarity = polarity
-                    existing.bull_freq = self.bull_words.get(word, 0)
-                    existing.bear_freq = self.bear_words.get(word, 0)
-                    existing.updated_at = datetime.now()
-                else:
-                    slang = MinedSlang(
-                        word=word,
-                        polarity=polarity,
-                        bull_freq=self.bull_words.get(word, 0),
-                        bear_freq=self.bear_words.get(word, 0)
-                    )
-                    db.add(slang)
-                saved += 1
+            # Clear old candidates
+            db.query(SlangCandidate).delete()
             
-            # Save bearish slang
-            for word, polarity in bear_list:
-                existing = db.query(MinedSlang).filter(MinedSlang.word == word).first()
-                if existing:
-                    existing.polarity = polarity
-                    existing.bull_freq = self.bull_words.get(word, 0)
-                    existing.bear_freq = self.bear_words.get(word, 0)
-                    existing.updated_at = datetime.now()
-                else:
-                    slang = MinedSlang(
-                        word=word,
-                        polarity=polarity,
-                        bull_freq=self.bull_words.get(word, 0),
-                        bear_freq=self.bear_words.get(word, 0)
-                    )
-                    db.add(slang)
+            # Insert new candidates (top 100)
+            for token, score, bull_freq, bear_freq in results[:100]:
+                candidate = SlangCandidate(
+                    token=token,
+                    score=score,
+                    bull_freq=bull_freq,
+                    bear_freq=bear_freq,
+                    last_updated=datetime.now()
+                )
+                db.add(candidate)
                 saved += 1
             
             db.commit()
         
-        print(f"\n✓ Saved {saved} slang terms to database")
         return saved
+    
+    def run(self) -> List[Tuple[str, float, int, int]]:
+        """
+        Run the complete slang mining pipeline.
+        
+        Returns:
+            List of (token, score, bull_freq, bear_freq)
+        """
+        print("=" * 60)
+        print("PTT Slang Miner - Regime Discovery Engine")
+        print("=" * 60)
+        
+        # Step 1: Label days by regime
+        regime_dict = self._label_days()
+        if not regime_dict:
+            print("❌ No regime labels available. Need more market data.")
+            return []
+        
+        # Step 2: Tokenize posts by regime
+        bull_counter, bear_counter = self._tokenize_posts(regime_dict)
+        
+        # Step 3: Calculate polarity scores
+        results = self._calculate_polarity(bull_counter, bear_counter)
+        
+        # Step 4: Save to database
+        saved = self._save_to_db(results)
+        
+        print(f"\n✓ Saved {saved} slang candidates to database")
+        
+        return results
+    
+    def print_report(self, results: List[Tuple[str, float, int, int]]):
+        """Print formatted report of discovered slang."""
+        # Separate bull and bear
+        bull_slang = [(t, s, bf, rf) for t, s, bf, rf in results if s > 0][:15]
+        bear_slang = [(t, s, bf, rf) for t, s, bf, rf in results if s < 0][:15]
+        
+        print("\n" + "=" * 60)
+        print("🔴 TOP BULLISH SLANG (dominates BULL_TREND regime)")
+        print("=" * 60)
+        for i, (token, score, bf, rf) in enumerate(bull_slang, 1):
+            bar = "█" * int(abs(score) * 20)
+            print(f"  {i:2d}. {token:<12} +{score:.2f} (bull:{bf}, bear:{rf}) {bar}")
+        
+        print("\n" + "=" * 60)
+        print("🟢 TOP BEARISH SLANG (dominates BEAR_TREND regime)")
+        print("=" * 60)
+        for i, (token, score, bf, rf) in enumerate(bear_slang, 1):
+            bar = "█" * int(abs(score) * 20)
+            print(f"  {i:2d}. {token:<12} {score:.2f} (bull:{bf}, bear:{rf}) {bar}")
 
 
 def main():
     """Entry point for slang miner."""
-    miner = SlangMiner(min_frequency=2)
-    bull_list, bear_list = miner.analyze()
-    miner.print_report(bull_list, bear_list)
-    miner.save_to_db(bull_list, bear_list)
-    return bull_list, bear_list
+    miner = SlangMiner()
+    results = miner.run()
+    miner.print_report(results)
+    return results
 
 
 if __name__ == "__main__":

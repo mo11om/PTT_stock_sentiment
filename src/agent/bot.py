@@ -41,8 +41,8 @@ def main():
     
     # Run slang miner
     print("\n[4/4] Mining slang correlations...")
-    miner = MinerAdapter(min_frequency=2)
-    bull_list, bear_list = miner.run()
+    miner = MinerAdapter()
+    results = miner.run()
     
     # Final summary
     print("\n" + "=" * 70)
@@ -50,7 +50,7 @@ def main():
     print("=" * 70)
     print(f"   ✓ Scraped: {new_posts} new posts")
     print(f"   ✓ Analyzed: {analyzed} posts")
-    print(f"   ✓ Discovered: {len(bull_list)} bullish, {len(bear_list)} bearish slang")
+    print(f"   ✓ Slang candidates: {len(results)}")
     print(f"   ✓ Finished at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print("=" * 70)
 

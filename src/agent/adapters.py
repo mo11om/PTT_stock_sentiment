@@ -27,19 +27,15 @@ class ScraperAdapter:
 class MinerAdapter:
     """Wrapper for SlangMiner that runs analysis and saves results."""
     
-    def __init__(self, min_frequency: int = 2):
-        self.min_frequency = min_frequency
-    
     def run(self):
         """Run slang mining and save to database."""
         from src.analysis.slang_miner import SlangMiner
         
-        miner = SlangMiner(min_frequency=self.min_frequency)
-        bull_list, bear_list = miner.analyze()
-        miner.print_report(bull_list, bear_list)
-        miner.save_to_db(bull_list, bear_list)
+        miner = SlangMiner()
+        results = miner.run()
+        miner.print_report(results)
         
-        return bull_list, bear_list
+        return results
 
 
 class SentimentAdapter:

@@ -18,7 +18,7 @@ from src.scraper.ptt_scraper import PTTScraper
 from src.analysis.engine import SentimentEngine, sync_market_data
 
 
-def run_pipeline(max_pages: int = 5, run_vacuum: bool = True, backfill: bool = False):
+def run_pipeline(max_pages: int = 5, run_vacuum: bool = True, backfill: bool = False, start_page: int = None):
     """
     Execute the full PTT Sentiment Alpha pipeline.
     
@@ -34,6 +34,8 @@ def run_pipeline(max_pages: int = 5, run_vacuum: bool = True, backfill: bool = F
     print(f"  Started at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     if backfill:
         print("  Mode: BACKFILL (scraping all pages)")
+    if start_page:
+        print(f"  Start Page: {start_page}")
     print("=" * 70)
     
     # Step 0: Initialize database
@@ -42,7 +44,7 @@ def run_pipeline(max_pages: int = 5, run_vacuum: bool = True, backfill: bool = F
     
     # Step 1: Run Scraper
     print("\n[Step 1] Running PTT Scraper...")
-    scraper = PTTScraper(max_pages=max_pages, backfill=backfill)
+    scraper = PTTScraper(max_pages=max_pages, backfill=backfill, start_page=start_page)
     new_posts = scraper.run()
     
     # Step 2: Run Sentiment Analysis
@@ -89,7 +91,9 @@ if __name__ == "__main__":
     parser.add_argument("--pages", type=int, default=5, help="Max pages to scrape (default: 5)")
     parser.add_argument("--no-vacuum", action="store_true", help="Skip VACUUM step")
     parser.add_argument("--backfill", action="store_true", help="Backfill mode: scrape all pages, skip existing posts")
+    parser.add_argument("--start-page", type=int, default=None, help="Start from specific page number (e.g., 2000 for index2000.html)")
     args = parser.parse_args()
     
-    run_pipeline(max_pages=args.pages, run_vacuum=not args.no_vacuum, backfill=args.backfill)
+    run_pipeline(max_pages=args.pages, run_vacuum=not args.no_vacuum, backfill=args.backfill, start_page=args.start_page)
+
 
