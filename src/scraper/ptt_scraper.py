@@ -29,7 +29,7 @@ class PTTScraper:
     RETRY_DELAY = 5  # seconds
     REQUEST_DELAY = 1  # seconds between requests
     
-    def __init__(self, max_pages: int = 10):
+    def __init__(self, max_pages: int = 10, backfill: bool = False):
         self.session = requests.Session()
         # Bypass age gate with over18 cookie
         self.session.cookies.set("over18", "1")
@@ -37,6 +37,7 @@ class PTTScraper:
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
         })
         self.max_pages = max_pages
+        self.backfill = backfill  # If True, continue past cached posts
         self.new_posts_count = 0
     
     def _request_with_retry(self, url: str) -> Optional[requests.Response]:
@@ -203,9 +204,11 @@ class PTTScraper:
         """
         Run the scraper with incremental logic.
         Returns the number of new posts scraped.
+        
+        If backfill=True, continues through all pages even when cached posts are found.
         """
         print("=" * 60)
-        print("PTT Stock Board Smart Scraper")
+        print("PTT Stock Board Smart Scraper" + (" (BACKFILL MODE)" if self.backfill else ""))
         print("=" * 60)
         
         current_url = self.BOARD_URL
@@ -225,11 +228,14 @@ class PTTScraper:
                 print(f"   Found {len(threads)} threads")
                 
                 for thread in threads:
-                    # Check if post already exists (stop condition)
+                    # Check if post already exists
                     if self._post_exists(db, thread["id"]):
-                        print(f"   ✓ Post {thread['id']} already exists - caught up!")
-                        should_stop = True
-                        break
+                        if self.backfill:
+                            continue  # Skip but continue
+                        else:
+                            print(f"   ✓ Post {thread['id']} already exists - caught up!")
+                            should_stop = True
+                            break
                     
                     # Fetch thread content
                     print(f"   → Fetching: {thread['title'][:40]}...")

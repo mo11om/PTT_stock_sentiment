@@ -81,3 +81,18 @@ class Sentiment(Base):
     
     def __repr__(self) -> str:
         return f"<Sentiment(post_id={self.post_id}, raw_score={self.raw_score}, effective_date={self.effective_date})>"
+
+
+class MinedSlang(Base):
+    """Stores discovered slang terms with market correlation scores."""
+    
+    __tablename__ = "mined_slang"
+    
+    word: Mapped[str] = mapped_column(String(50), primary_key=True)
+    polarity: Mapped[float] = mapped_column(Float, nullable=False)  # -1.0 to +1.0
+    bull_freq: Mapped[int] = mapped_column(Integer, default=0)
+    bear_freq: Mapped[int] = mapped_column(Integer, default=0)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
+    
+    def __repr__(self) -> str:
+        return f"<MinedSlang(word={self.word}, polarity={self.polarity:.2f})>"

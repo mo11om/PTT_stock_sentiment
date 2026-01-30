@@ -1,9 +1,10 @@
-sqlalchemy
+sqlalchemy>=2.0
 streamlit
 yfinance
 beautifulsoup4
 requests
 pandas
 plotly
+jieba
 textblob
 matplotlib

@@ -39,6 +39,9 @@ The system is built as a modular pipeline:
 │   │   └── ptt_scraper.py # Incremental crawler (Newest -> Oldest)
 │   ├── analysis/         # Core Logic
 │   │   └── engine.py     # Slang Normalization + Trading Day Shift + Z-Score
+│   ├── agent/            # Orchestration Layer
+│   │   ├── bot.py        # Main Agent Cycle (Scrape -> Mine -> Report)
+│   │   └── adapters.py   # Interface Wrappers
 │   └── dashboard/        # Presentation
 │       └── app.py        # Streamlit Dual-Axis Visualization
 ├── run_pipeline.py       # Orchestrator (Scrape -> Analyze -> Sync)
@@ -83,6 +86,14 @@ This project adheres strictly to **Taiwan Stock Exchange (TWSE)** conventions:
     -   Right: Sentiment Z-Score (Bar).
 -   **Visuals**: Strict adherence to Red/Green color coding.
 
+### 4. Agent (`src/agent/`)
+-   **Bot (`bot.py`)**: The autonomous operator that runs the entire cycle:
+    1.  **Scrape**: Fetches new posts.
+    2.  **Analyze**: Computes sentiment scores.
+    3.  **Mine**: Discovers new slang using differential scoring.
+    4.  **Report**: Summarizes findings.
+-   **Adapters (`adapters.py`)**: Clean interfaces to wrap the core logic modules, ensuring modularity.
+
 ---
 
 ## ⚡ Quick Start
@@ -98,7 +109,13 @@ Scrape new posts, calculate sentiment, and sync market prices:
 python run_pipeline.py --pages 10
 ```
 
-### 3. Launch Dashboard
+### 3. Run the Full Agent Cycle
+Run scraping, sentiment analysis, AND slang mining in one go:
+```bash
+python src/agent/bot.py
+```
+
+### 4. Launch Dashboard
 Visualize the Alpha:
 ```bash
 streamlit run src/dashboard/app.py

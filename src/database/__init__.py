@@ -3,7 +3,7 @@ Database module for PTT Sentiment Analysis
 """
 
 from .database import engine, SessionLocal, get_db, get_db_session, init_db, DB_PATH, vacuum_db
-from .models import Base, Post, MarketData, Sentiment
+from .models import Base, Post, MarketData, Sentiment, MinedSlang
 
 __all__ = [
     "engine",
@@ -16,5 +16,6 @@ __all__ = [
     "Base",
     "Post",
     "MarketData",
-    "Sentiment"
+    "Sentiment",
+    "MinedSlang"
 ]
