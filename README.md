@@ -82,6 +82,9 @@ python backfill_market.py
 # Run pipeline with backfill
 python run_pipeline.py --pages 50 --backfill
 
+# Start from specific page (e.g., page 2000 for older posts)
+python run_pipeline.py --pages 100 --backfill --start-page 2000
+
 # Run agent bot
 python -m src.agent.bot
 
