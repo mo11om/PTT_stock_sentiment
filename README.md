@@ -105,5 +105,10 @@ streamlit run src/dashboard/app.py
 
 ---
 
+## 👤 Author
+[mo11om](https://github.com/mo11om)
+
+---
+
 ## 🛡️ License
 MIT. Built for research and educational purposes.
