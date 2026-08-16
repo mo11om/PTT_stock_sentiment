@@ -37,4 +37,10 @@ ENV/
 
 # Project-specific
 ptt_sentiment.db
+ptt_sentiment.db-shm
+ptt_sentiment.db-wal
 .claude/
+
+# Data artifacts (raw scrapes, generated reports/charts)
+data/
+output/
